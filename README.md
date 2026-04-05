@@ -1,16 +1,19 @@
 **Describe the bug**
 
-`StreamableHttpClientTransport` in `rmcp v1.3.0` exhibits significantly higher latency on subsequent tool calls compared to the Python MCP SDK client. The first call is fast (~2ms), but every subsequent call takes ~42ms — roughly 10x slower than Python's subsequent calls (~3ms). The degradation is consistent and repro across all subsequent calls.
+`StreamableHttpClientTransport` in `rmcp v1.3.0` exhibits significantly higher latency on subsequent tool calls compared to the Python MCP SDK client. The first call is fast (~0.6ms), but every subsequent call takes ~41ms — roughly 10x slower than Python's subsequent calls (~3ms). The degradation is consistent and reproducible across all subsequent calls.
+
+**Workaround**: Using a custom reqwest client with connection pooling disabled (`pool_max_idle_per_host(0)`) resolves the issue, bringing subsequent calls down to ~0.4ms.
 
 | Client | Call 1 | Call 2 | Call 3 | Call 4 | Call 5 |
 |--------|--------|--------|--------|--------|--------|
-| **Rust (rmcp)** | 1.7ms | 41.2ms | 42.0ms | 42.9ms | 41.9ms |
-| **Python** | 12.0ms | 3.0ms | 2.9ms | 3.3ms | 3.2ms |
+| **Rust (rmcp default)** | 0.6ms | 42.3ms | 41.0ms | 41.1ms | 41.1ms |
+| **Rust (custom client)** | 0.5ms | 0.4ms | 0.4ms | 0.3ms | 0.4ms |
+| **Python** | 9.5ms | 2.8ms | 2.9ms | 3.0ms | 2.6ms |
 
 **To Reproduce**
 
 1. Start the `servers_counter_streamhttp` server from `rmcp v1.3.0`.
-2. Run the Rust client:
+2. Run the Rust client (default):
    ```rust
    use rmcp::transport::StreamableHttpClientTransport;
    use rmcp::{ServiceExt, model::*};
@@ -30,7 +33,22 @@
        Ok(())
    }
    ```
-3. Run the equivalent Python client:
+3. Run the Rust client with custom configuration (workaround):
+   ```bash
+   cargo run --release -- custom
+   ```
+   This uses a custom reqwest client with `pool_max_idle_per_host(0)` to disable connection reuse:
+   ```rust
+   let reqwest_client = reqwest::Client::builder()
+       .pool_max_idle_per_host(0)
+       .build()?;
+
+   let transport = StreamableHttpClientTransport::with_client(
+       reqwest_client,
+       StreamableHttpClientTransportConfig::with_uri(url),
+   );
+   ```
+4. Run the equivalent Python client:
    ```python
    import asyncio, time
    from mcp import ClientSession
@@ -50,26 +68,35 @@
 
 **Expected behavior**
 
-Subsequent tool calls should have similar or lower latency than the first call, as the session is already established. The Python client demonstrates this pattern (12ms → 3ms). The Rust client should not regress to ~42ms on every call after the first.
+Subsequent tool calls should have similar or lower latency than the first call, as the session is already established. The Python client demonstrates this pattern (9.5ms → 2.8ms). The Rust client should not regress to ~42ms on every call after the first. The custom client workaround shows that disabling connection pooling brings subsequent calls down to ~0.4ms, proving the issue is related to connection reuse behavior.
 
 **Logs**
 
-Rust client output:
+Rust client output (default):
 ```
-Call 1: 1.7ms
-Call 2: 41.2ms
-Call 3: 42.0ms
-Call 4: 42.9ms
-Call 5: 41.9ms
+Call 1: 0.6ms
+Call 2: 42.3ms
+Call 3: 41.0ms
+Call 4: 41.1ms
+Call 5: 41.1ms
+```
+
+Rust client output (custom client with `pool_max_idle_per_host(0)`):
+```
+Call 1: 0.5ms
+Call 2: 0.4ms
+Call 3: 0.4ms
+Call 4: 0.3ms
+Call 5: 0.4ms
 ```
 
 Python client output:
 ```
-Call 1: 12.0ms
-Call 2: 3.0ms
+Call 1: 9.5ms
+Call 2: 2.8ms
 Call 3: 2.9ms
-Call 4: 3.3ms
-Call 5: 3.2ms
+Call 4: 3.0ms
+Call 5: 2.6ms
 Session termination failed: 202
 ```
 
