@@ -14,57 +14,112 @@
 
 1. Start the `servers_counter_streamhttp` server from `rmcp v1.3.0`.
 2. Run the Rust client (default):
-   ```rust
-   use rmcp::transport::StreamableHttpClientTransport;
-   use rmcp::{ServiceExt, model::*};
-   use std::time::Instant;
-
-   #[tokio::main]
-   async fn main() -> Result<(), Box<dyn std::error::Error>> {
-       let transport = StreamableHttpClientTransport::from_uri("http://localhost:8000/mcp");
-       let client = ClientInfo::default().serve(transport).await?;
-
-       for i in 1..=5 {
-           let start = Instant::now();
-           let _res = client.call_tool(CallToolRequestParams::new("say_hello")).await.unwrap();
-           println!("Call {}: {:.1}ms", i, start.elapsed().as_secs_f32() * 1000.0);
-       }
-       client.cancel().await?;
-       Ok(())
-   }
+   ```bash
+   cargo run --release
    ```
 3. Run the Rust client with custom configuration (workaround):
    ```bash
    cargo run --release -- custom
    ```
-   This uses a custom reqwest client with `pool_max_idle_per_host(0)` to disable connection reuse:
-   ```rust
-   let reqwest_client = reqwest::Client::builder()
-       .pool_max_idle_per_host(0)
-       .build()?;
 
-   let transport = StreamableHttpClientTransport::with_client(
-       reqwest_client,
-       StreamableHttpClientTransportConfig::with_uri(url),
-   );
-   ```
-4. Run the equivalent Python client:
-   ```python
-   import asyncio, time
-   from mcp import ClientSession
-   from mcp.client.streamable_http import streamablehttp_client
+## Full `main.rs`
 
-   async def main():
-       async with streamablehttp_client(url="http://localhost:8000/mcp") as (read, write, _):
-           async with ClientSession(read, write) as session:
-               await session.initialize()
-               for i in range(1, 6):
-                   start = time.perf_counter()
-                   await session.call_tool("say_hello", arguments={})
-                   print(f"Call {i}: {(time.perf_counter() - start) * 1000:.1f}ms")
+This is the complete client implementation used for benchmarking. It supports both the default and custom client modes via a command-line argument:
 
-   asyncio.run(main())
-   ```
+```rust
+use rmcp::transport::{
+    StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
+};
+use rmcp::{ServiceExt, model::*};
+use std::{env, time::Instant};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let url = "http://localhost:8000/mcp";
+    let tool = "say_hello";
+    let use_custom_client = env::args().any(|arg| arg == "custom");
+
+    let client = if use_custom_client {
+        let reqwest_client = reqwest::Client::builder()
+            .pool_max_idle_per_host(0)
+            .build()?;
+
+        let transport = StreamableHttpClientTransport::with_client(
+            reqwest_client,
+            StreamableHttpClientTransportConfig::with_uri(url),
+        );
+        ClientInfo::default().serve(transport).await?
+    } else {
+        let transport = StreamableHttpClientTransport::from_uri(url);
+        ClientInfo::default().serve(transport).await?
+    };
+
+    for i in 1..=5 {
+        let start = Instant::now();
+        let _res = client
+            .call_tool(CallToolRequestParams::new(tool))
+            .await
+            .unwrap_or_default();
+
+        println!(
+            "Call {}: {:.1}ms",
+            i,
+            start.elapsed().as_secs_f32() * 1000.0
+        );
+    }
+
+    client.cancel().await?;
+    Ok(())
+}
+```
+
+## Default vs Custom Client: What's the Difference?
+
+The key difference lies in how the underlying `reqwest` HTTP client handles **connection pooling**:
+
+### Default Client
+
+```rust
+let transport = StreamableHttpClientTransport::from_uri(url);
+```
+
+- `StreamableHttpClientTransport::from_uri()` creates an internal `reqwest::Client` with **default settings**.
+- By default, `reqwest` enables connection pooling — idle connections are kept alive and reused for subsequent requests to the same host.
+- **The problem**: In this specific scenario, reusing pooled connections introduces ~41ms of overhead on every call after the first. This may be due to the server closing the Streamable HTTP session on the reused connection, forcing a renegotiation or timeout wait before a new connection is established.
+
+### Custom Client
+
+```rust
+let reqwest_client = reqwest::Client::builder()
+    .pool_max_idle_per_host(0)  // Disable connection pooling
+    .build()?;
+
+let transport = StreamableHttpClientTransport::with_client(
+    reqwest_client,
+    StreamableHttpClientTransportConfig::with_uri(url),
+);
+```
+
+- A `reqwest::Client` is manually constructed with `pool_max_idle_per_host(0)`, which **disables connection pooling entirely**.
+- Each request opens a fresh connection, and the connection is closed immediately after use — no idle connections are retained.
+- **The result**: Subsequent calls drop from ~41ms to ~0.4ms because the overhead of managing/reusing stale pooled connections is eliminated.
+
+### Why Does This Happen?
+
+Streamable HTTP (used by `StreamableHttpClientTransport`) establishes a session that may have specific lifecycle expectations. When a pooled connection is reused:
+
+1. The server may have already cleaned up the previous session.
+2. The client attempts to reuse the TCP connection, but the server responds with an error or forces a re-handshake.
+3. This adds latency as the client falls back to establishing a new connection.
+
+Disabling pooling ensures each call gets a clean connection, avoiding this stale-connection overhead. The trade-off is the cost of a TCP handshake on every call, but in local/benchmark scenarios this is negligible (~0.4ms).
+
+### When to Use Each Approach
+
+| Approach | Use When |
+|----------|----------|
+| **Default client** | General use cases where connection pooling benefits outweigh edge-case session lifecycle issues. |
+| **Custom client (`pool_max_idle_per_host(0)`)** | When interacting with Streamable HTTP servers that exhibit session/connection reuse issues, or when consistent low-latency is critical. |
 
 **Expected behavior**
 
