@@ -1,4 +1,6 @@
-use rmcp::transport::{StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig};
+use rmcp::transport::{
+    StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
+};
 use rmcp::{ServiceExt, model::*};
 use std::{env, time::Instant};
 
