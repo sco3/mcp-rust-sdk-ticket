@@ -36,22 +36,26 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Compare Network Stack (Linux vs macOS)
+      - name: Audit Network Stack (Safe Version)
         run: |
           if [ "$RUNNER_OS" == "Linux" ]; then
             echo "--- LINUX (Ubuntu) TCP AUDIT ---"
-            # Global flags
-            sysctl net.ipv4.tcp_low_latency || echo "tcp_low_latency not in this kernel"
-            sysctl net.ipv4.tcp_autocorking
-            
-            # Check for "Quick ACK" support
-            echo "Nagle-related metrics (from snmp):"
-            grep -E "TcpExt|DelayedACKs" /proc/net/netstat | cut -c1-100
+            sysctl net.ipv4.tcp_low_latency || echo "Low latency OID not found"
+            sysctl net.ipv4.tcp_autocorking || echo "Autocorking OID not found"
+            # This shows the actual counts of delayed ACKs sent
+            grep "DelayedACKs" /proc/net/netstat || echo "Netstat metrics not available"
           
           elif [ "$RUNNER_OS" == "macOS" ]; then
             echo "--- MACOS (ARM) TCP AUDIT ---"
-            sysctl net.inet.tcp.delayed_ack
-            sysctl net.inet.tcp.nodelay        # This is the global Nagle toggle for Mac!
+            # This is the big one on Mac
+            sysctl net.inet.tcp.delayed_ack || echo "delayed_ack not found"
+            
+            # On Mac, 'nodelay' is often not a sysctl but we check these instead:
+            sysctl net.inet.tcp.mssdflt || echo "MSS not found"
+            sysctl net.inet.tcp.sendspace || echo "Sendspace not found"
+            
+            # Show cumulative network stats to see if ACKs are being held
+            netstat -s -p tcp | grep "delayed" || true
           fi
 
       - name: Clone rmcp rust-sdk for test server
