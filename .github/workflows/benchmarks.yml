@@ -1,0 +1,72 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clone rmcp rust-sdk for test server
+        run: git clone https://github.com/modelcontextprotocol/rust-sdk.git /tmp/rust-sdk
+
+      - name: Build MCP test server
+        working-directory: /tmp/rust-sdk
+        run: cargo build -p mcp-server-examples --example servers_counter_streamhttp --release
+
+      - name: Build Rust benchmark client
+        run: cargo build --release
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Start MCP test server
+        run: |
+          /tmp/rust-sdk/target/release/examples/servers_counter_streamhttp &
+          echo $! > /tmp/mcp_server.pid
+          sleep 2
+
+      - name: Run Rust benchmark (default mode)
+        run: |
+          echo "=== Rust Benchmark (Default Mode) ==="
+          cargo run --release
+
+      - name: Run Rust benchmark (custom mode)
+        run: |
+          echo "=== Rust Benchmark (Custom Mode - pool_max_idle_per_host(0)) ==="
+          cargo run --release -- custom
+
+      - name: Run Python latency test
+        run: |
+          echo "=== Python Latency Test ==="
+          uv run latency_test.py http://localhost:8000/mcp say_hello
+
+      - name: Stop MCP test server
+        if: always()
+        run: kill $(cat /tmp/mcp_server.pid) 2>/dev/null || true
