@@ -24,8 +24,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Clone rmcp rust-sdk for test server
-        # Pinned to v1.3.0 for reproducible benchmarks
-        run: git clone --branch v1.3.0 --depth 1 https://github.com/modelcontextprotocol/rust-sdk.git /tmp/rust-sdk
+        # Pinned to rmcp-v1.3.0 for reproducible benchmarks
+        run: git clone --branch rmcp-v1.3.0 --depth 1 https://github.com/modelcontextprotocol/rust-sdk.git /tmp/rust-sdk
 
       - name: Build MCP test server
         working-directory: /tmp/rust-sdk
