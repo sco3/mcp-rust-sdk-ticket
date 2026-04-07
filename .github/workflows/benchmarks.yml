@@ -13,7 +13,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -24,7 +24,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Clone rmcp rust-sdk for test server
-        run: git clone https://github.com/modelcontextprotocol/rust-sdk.git /tmp/rust-sdk
+        # Pinned to v1.3.0 for reproducible benchmarks
+        run: git clone --branch v1.3.0 --depth 1 https://github.com/modelcontextprotocol/rust-sdk.git /tmp/rust-sdk
 
       - name: Build MCP test server
         working-directory: /tmp/rust-sdk
@@ -34,7 +35,7 @@ jobs:
         run: cargo build --release
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
