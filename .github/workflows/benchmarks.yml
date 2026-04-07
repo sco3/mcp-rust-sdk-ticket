@@ -24,7 +24,35 @@ jobs:
           toolchain: stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Compare Network Stack (Linux vs macOS)
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            echo "--- LINUX (Ubuntu) TCP AUDIT ---"
+            # Global flags
+            sysctl net.ipv4.tcp_low_latency || echo "tcp_low_latency not in this kernel"
+            sysctl net.ipv4.tcp_autocorking
+            
+            # Check for "Quick ACK" support
+            echo "Nagle-related metrics (from snmp):"
+            grep -E "TcpExt|DelayedACKs" /proc/net/netstat | cut -c1-100
+          
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            echo "--- MACOS (ARM) TCP AUDIT ---"
+            sysctl net.inet.tcp.delayed_ack
+            sysctl net.inet.tcp.nodelay        # This is the global Nagle toggle for Mac!
+          fi
 
       - name: Clone rmcp rust-sdk for test server
         # Pinned to rmcp-v1.3.0 for reproducible benchmarks
