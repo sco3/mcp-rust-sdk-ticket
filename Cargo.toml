@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk.git", branch = "pr/790", features = [
+rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk.git", branch = "fix/streamable-http-connection-reuse", features = [
     "server",
     "client",
     "macros",
