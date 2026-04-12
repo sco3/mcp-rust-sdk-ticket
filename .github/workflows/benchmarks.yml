@@ -58,9 +58,9 @@ jobs:
             netstat -s -p tcp | grep "delayed" || true
           fi
 
-      - name: Clone rmcp rust-sdk for test server
-        # Pinned to rmcp-v1.3.0 for reproducible benchmarks
-        run: git clone --branch rmcp-v1.3.0 --depth 1 https://github.com/modelcontextprotocol/rust-sdk.git /tmp/rust-sdk
+      - name: Clone rmcp rust-sdk for test server (PR #790)
+        # Using PR #790 branch for testing the suggested fix
+        run: git clone --branch pr/790 --depth 1 https://github.com/modelcontextprotocol/rust-sdk.git /tmp/rust-sdk || git clone --depth 1 https://github.com/modelcontextprotocol/rust-sdk.git /tmp/rust-sdk && cd /tmp/rust-sdk && git fetch origin pull/790/head:pr-790 && git checkout pr-790
 
       - name: Build MCP test server
         working-directory: /tmp/rust-sdk
