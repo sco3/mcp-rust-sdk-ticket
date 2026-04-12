@@ -1,0 +1,6 @@
+[project]
+name = "latency-test"
+version = "0.1.0"
+description = "MCP latency test client"
+requires-python = ">=3.13"
+dependencies = ["mcp>=1.0.0"]

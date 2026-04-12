@@ -1,0 +1,108 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, macos-14]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Audit Network Stack (Safe Version)
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            echo "--- LINUX (Ubuntu) TCP AUDIT ---"
+            sysctl net.ipv4.tcp_low_latency || echo "Low latency OID not found"
+            sysctl net.ipv4.tcp_autocorking || echo "Autocorking OID not found"
+            # This shows the actual counts of delayed ACKs sent
+            grep "DelayedACKs" /proc/net/netstat || echo "Netstat metrics not available"
+          
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            echo "--- MACOS (ARM) TCP AUDIT ---"
+            # This is the big one on Mac
+            sysctl net.inet.tcp.delayed_ack || echo "delayed_ack not found"
+            
+            # On Mac, 'nodelay' is often not a sysctl but we check these instead:
+            sysctl net.inet.tcp.mssdflt || echo "MSS not found"
+            sysctl net.inet.tcp.sendspace || echo "Sendspace not found"
+            
+            # Show cumulative network stats to see if ACKs are being held
+            netstat -s -p tcp | grep "delayed" || true
+          fi
+
+      - name: Clone rmcp rust-sdk for test server (PR #790)
+        # Using PR #790 branch for testing the suggested fix
+        run: git clone --branch fix/streamable-http-connection-reuse --depth 1 https://github.com/modelcontextprotocol/rust-sdk.git /tmp/rust-sdk || git clone --depth 1 https://github.com/modelcontextprotocol/rust-sdk.git /tmp/rust-sdk && cd /tmp/rust-sdk && git fetch origin pull/790/head:pr-790 && git checkout pr-790
+
+      - name: Build MCP test server
+        working-directory: /tmp/rust-sdk
+        run: cargo build -p mcp-server-examples --example servers_counter_streamhttp --release
+
+      - name: Build Rust benchmark client
+        run: cargo build --release
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Start MCP test server
+        run: |
+          /tmp/rust-sdk/target/release/examples/servers_counter_streamhttp &
+          echo $! > /tmp/mcp_server.pid
+          sleep 2
+
+      - name: Run Rust benchmark (default mode)
+        run: |
+          echo "=== Rust Benchmark (Default Mode) ==="
+          cargo run --release
+
+      - name: Run Rust benchmark (custom mode)
+        run: |
+          echo "=== Rust Benchmark (Custom Mode - pool_max_idle_per_host(0)) ==="
+          cargo run --release -- custom
+
+      - name: Run Python latency test
+        run: |
+          echo "=== Python Latency Test ==="
+          uv run latency_test.py http://localhost:8000/mcp say_hello
+
+      - name: Stop MCP test server
+        if: always()
+        run: kill $(cat /tmp/mcp_server.pid) 2>/dev/null || true
